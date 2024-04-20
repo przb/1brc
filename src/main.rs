@@ -11,16 +11,19 @@ fn main() {
     let reader = BufReader::new(file);
 
     // mapping of station name to min, sum, max, and count, respectively.
-    let mut mappings: HashMap<String, (f64, f64, f64, usize)> = HashMap::new();
+    let mut mappings: HashMap<String, (isize, isize, isize, usize)> = HashMap::new();
 
     for line in reader.lines() {
         let line = line.unwrap();
         if let Some((station, m)) = line.split_once(';') {
-            let measurement = m.parse().expect("Unable to parse measurement");
+            let (l, r) = m.split_once('.').expect("Did not find a decimal in the measurement");
+            let int = l.parse::<isize>().expect("unable to parse the integer part of the measurement");
+            let dec = r.parse::<isize>().expect("unable to parse the decimal part of the measurement");
+            let measurement = (int * 10) + dec;
             mappings.entry(station.into())
                 .and_modify(|(min, sum, max, count)| {
-                    *min = f64::min(*min, measurement);
-                    *max = f64::max(*max, measurement);
+                    *min = isize::min(*min, measurement);
+                    *max = isize::max(*max, measurement);
                     *sum += measurement;
                     *count += 1;
                 })
@@ -29,8 +32,10 @@ fn main() {
     }
 
     for (k, (min, sum, max, count)) in mappings.iter().sorted_by(|(k, _), (l, _)|k.cmp(l)) {
-        let avg = sum / (*count as f64);
-
+        // dividing by 10 to convert the fixed point to a floating point
+        let avg = (*sum as f64 / 10.0) / (*count as f64);
+        let min = *min as f64 / 10.0;
+        let max = *max as f64 / 10.0;
         println!("{k:100} | Avg: {avg:>5.1} | Min: {min:>5.1} | Max: {max:>5.1} | Count: {count:>10}");
     }
 }
