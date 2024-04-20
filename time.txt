@@ -1,1 +1,2 @@
-12m49s
+debug:    12m49s
+release:  1m55s
