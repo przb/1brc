@@ -1,0 +1,11 @@
+Port Sudan;42.2
+Kyiv;29.3
+Busan;8.8
+Kumasi;17.7
+Amsterdam;17.0
+Kyoto;19.2
+Managua;22.9
+City of San Marino;10.6
+Parakou;24.9
+Whitehorse;-11.2
+Kyiv;-34.3
