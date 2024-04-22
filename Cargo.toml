@@ -7,3 +7,5 @@ edition = "2021"
 
 [dependencies]
 itertools = "0.12.1"
+memmap = "0.7.0"
+memchr = "2.7.2"
