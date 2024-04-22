@@ -6,8 +6,6 @@ use itertools::Itertools;
 use memmap;
 
 const FILENAME: &str = "measurements.txt";
-const CHUNK_SIZE: usize = 2 * 16;
-// about 16 chars per line
 const NUM_CHUNKS: usize = 16;
 
 /// min, sum, max, and count, respectively
@@ -37,6 +35,7 @@ fn process_file_chunks(rx: Receiver<String>) -> HashMap<String, ComputedMeasurem
     while let Ok(chunk) = rx.recv() {
         println!("received data");
         for line in chunk.lines() {
+            // println!("processing line: {}", line);
             process_line(line, &mut mappings);
         }
     }
@@ -63,44 +62,71 @@ fn read_file(tx: mpsc::Sender<String>) {
     let mmap = unsafe { memmap::Mmap::map(&file).expect("Unable to map the file") };
     let bm = &mmap;
     thread::scope(|s| {
-        // mmap thread
-        s.spawn(move || {
-            let mut start = 0;
-            for _ in 0..NUM_CHUNKS {
-                let end = usize::min(start + chunk_size, bm.len());
-                let next_new_line = match memchr::memchr(b'\n', &bm[end..]) {
-                    Some(v) => v,
-                    None => {
-                        assert_eq!(end, bm.len());
-                        0
-                    }
-                };
-                let end = end + next_new_line;
+        for chunk_num in 0..NUM_CHUNKS {
+            let tx = mmap_tx.clone();
+            thread::Builder::new()
+                .name(format!("mmap chunk division thread ({})", chunk_num))
+                .spawn_scoped(s, move || {
+                    let mut start = chunk_num * chunk_size;
+                    let prev_start = start.checked_sub(chunk_size).unwrap_or_default();
 
-                mmap_tx.send((start, end)).expect("Unable to send chunk to the channel");
+                    let prev_map = bm.get(prev_start..start).unwrap_or_default();
+                    let prev_new_line = prev_map.iter()
+                        .rev()
+                        .position(|&c| c == b'\n')
+                        .unwrap_or_default();
+                    start = start - prev_new_line;
 
-                start = end + 1;
-            }
-        });
-        // sending thread
-        s.spawn(move || {
-            while let Ok((start, end)) = mmap_rx.recv() {
-                let bytes = bm.get(start..end).expect("Unable to get the chunk");
-                let s = String::from_utf8_lossy(bytes);
-                tx.send(s.into()).expect("Unable to send chunk to the channel");
-            }
-        });
+                    let end = usize::min(start + chunk_size, bm.len());
+                    let curr_map = bm.get(start..end).unwrap_or_default();
+                    let last_new_line = curr_map.iter()
+                        .rev()
+                        .position(|&c| c == b'\n')
+                        .unwrap_or_default();
+                    let end = end - last_new_line;
+
+                    tx.send((start, end))
+                        .expect("Unable to send chunk to the channel");
+                })
+                .expect("Unable to spawn a new thread");
+        }
+        thread::Builder::new()
+            .name("mmap chunk read dispatcher thread".into())
+            .spawn_scoped(s, move || {
+                let mut thread = 0;
+                while let Ok((start, end)) = mmap_rx.recv() {
+                    let thread_tx = tx.clone();
+                    thread::Builder::new()
+                        .name(format!("mmap chunk read thread {thread}"))
+                        .spawn_scoped(s, move || {
+                            let bytes = bm.get(start..end)
+                                .expect("Unable to get the chunk");
+                            let s = String::from_utf8_lossy(bytes);
+                            thread_tx.send(s.into())
+                                .expect("Unable to send chunk to the channel");
+                        })
+                        .expect("Unable to spawn a new thread");
+                    thread += 1;
+                }
+            })
+            .expect("Unable to spawn a new thread");
     });
 }
 
 fn main() {
     let (tx, rx) = mpsc::channel();
 
-    thread::spawn(|| { read_file(tx) });
-    let out_thread = thread::spawn(|| {
-        let mappings = process_file_chunks(rx);
-        print_mappings(mappings);
-    });
+    thread::Builder::new()
+        .name("reading thread".into())
+        .spawn(|| { read_file(tx) })
+        .expect("Unable to spawn a new thread");
+    let out_thread = thread::Builder::new()
+        .name("processing thread".into())
+        .spawn(|| {
+            let mappings = process_file_chunks(rx);
+            print_mappings(mappings);
+        })
+        .expect("Unable to spawn a new thread");
 
     out_thread.join().expect("Unable to join the output thread");
 }
